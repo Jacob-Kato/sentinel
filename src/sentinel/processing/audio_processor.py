@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import numpy as np
 import numpy.typing as npt
@@ -63,7 +63,7 @@ class AudioProcessor:
             clipping_ratio=clipping_ratio,
             sample_count=int(original_audio.size),
             duration_seconds=original_audio.size / sample_rate,
-            captured_at=datetime.now(timezone.utc),
+            captured_at=datetime.now(UTC),
         )
 
         return AudioProcessingResult(

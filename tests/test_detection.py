@@ -1,12 +1,11 @@
 import pytest
-from sentinel.analysis.audio_analyzer import AudioFrameFeatures
 
+from sentinel.analysis.audio_analyzer import AudioFrameFeatures
+from sentinel.detection.mock_detector import MockAudioDetector
 from sentinel.detection.models import (
     DetectionCategory,
     DetectionResult,
 )
-
-from sentinel.detection.mock_detector import MockAudioDetector
 
 
 def test_detection_result_creation():
