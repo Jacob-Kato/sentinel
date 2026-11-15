@@ -29,6 +29,8 @@ vad-silero = [
 live = [
     "onnxruntime>=1.16.1",
     "soxr",
+    "vosk>=0.3.45",
+    "ai-edge-litert>=2.3.0",
 ]
 
 [tool.setuptools.packages.find]

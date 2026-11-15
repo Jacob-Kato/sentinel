@@ -19,3 +19,6 @@ venv/
 *.mp3
 *.log
 .DS_Store
+/models/vosk-model-small-en-us-0.15/
+/models/yamnet.tflite
+/models/yamnet.tflite.tmp

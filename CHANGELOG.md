@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-11-15 — Three Alert Tiers
+
+### Added
+- Added amplitude-based noise alerts, offline recognition for “hey,” “excuse
+  me,” and emergency phrases, plus asynchronous YAMNet alarm and siren
+  classification.
+- Added level labels to Discord messages and separate workers for phrase and
+  alarm analysis, keeping that inference out of microphone capture and speech
+  VAD processing.
+- First-run Raspberry Pi setup installs LiteRT and Vosk and downloads their
+  models without adding downloaded model files to Git.
+
+### Notes
+- The README explains the reason for three levels, sensitivity settings,
+  expected alarm-detection delay, and the limits of sound-only fire/alarm
+  recognition. This remains a prototype, not a life-safety device.
+
 ## 2026-11-14 — Discord HTTP Client Identification
 
 ### Fixed

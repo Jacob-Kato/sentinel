@@ -12,7 +12,11 @@ import numpy as np
 import sounddevice as sd
 import soxr
 
+from sentinel.detection.alerts import AlertEvent, AlertTier
+from sentinel.detection.noise import NoiseActivityTracker
+from sentinel.detection.phrase_detector import VoskPhraseDetector
 from sentinel.detection.silero_vad import SileroVAD, SileroVADFrame
+from sentinel.detection.yamnet import YamnetAlarmDetector, YamnetStream
 from sentinel.notifications import DiscordWebhookNotifier
 
 
@@ -162,15 +166,35 @@ def _print_event(event: SpeechEvent) -> None:
         print("[SENTINEL] Listening...", flush=True)
 
 
+def _print_alert(event: AlertEvent) -> None:
+    labels = {
+        AlertTier.NOISE: "NOISE",
+        AlertTier.ATTENTION: "ATTENTION",
+        AlertTier.EMERGENCY: "EMERGENCY",
+    }
+    confidence = (
+        f" (confidence={event.confidence:.2f})"
+        if event.confidence is not None
+        else ""
+    )
+    print(
+        f"[SENTINEL] [{labels[event.tier]}] {event.message}{confidence}",
+        flush=True,
+    )
+
+
 def run() -> None:
-    """Listen until Ctrl+C, processing VAD outside the audio callback."""
+    """Listen until Ctrl+C, running audio analysis and alerts asynchronously."""
     device, input_rate = _select_input_device()
     device_info = sd.query_devices(device, "input")
     device_name = device_info["name"]
 
     audio_queue: queue.Queue[np.ndarray] = queue.Queue(maxsize=64)
-    notification_queue: queue.Queue[SpeechEvent] = queue.Queue(maxsize=16)
+    phrase_queue: queue.Queue[tuple[np.ndarray, float]] = queue.Queue(maxsize=128)
+    alarm_queue: queue.Queue[tuple[np.ndarray, float]] = queue.Queue(maxsize=128)
+    notification_queue: queue.Queue[AlertEvent] = queue.Queue(maxsize=32)
     stop_event = threading.Event()
+    analysis_stop = threading.Event()
     notification_stop = threading.Event()
     callback_error: list[str] = []
     worker_error: list[BaseException] = []
@@ -178,7 +202,13 @@ def run() -> None:
     notifier = DiscordWebhookNotifier.from_environment()
     resampler = soxr.ResampleStream(input_rate, 16000, 1, dtype="float32")
     detector = SileroVAD()
+    phrase_detector = VoskPhraseDetector.from_environment()
+    alarm_detector = YamnetAlarmDetector.from_environment()
+    alarm_stream = YamnetStream(alarm_detector)
+    noise_threshold = float(os.environ.get("SENTINEL_NOISE_RMS_THRESHOLD", "0.015"))
+    noise_tracker = NoiseActivityTracker(threshold_rms=noise_threshold)
     started_at = time.monotonic()
+    queue_warnings: set[str] = set()
 
     def fail(message: str) -> None:
         if not callback_error:
@@ -201,25 +231,43 @@ def run() -> None:
             fail("Audio processing fell behind; the bounded audio queue is full.")
             raise sd.CallbackAbort
 
-    def enqueue_notification(event: SpeechEvent) -> None:
-        if event.kind != "speech_started" or not notifier.enabled:
+    def enqueue_notification(event: AlertEvent) -> None:
+        _print_alert(event)
+        if not notifier.enabled:
             return
         try:
             notification_queue.put_nowait(event)
         except queue.Full:
             print(
-                "[SENTINEL] Notification queue is full; speech alert was not sent.",
+                "[SENTINEL] Notification queue is full; alert was not sent.",
                 flush=True,
             )
+
+    def enqueue_audio(
+        target: queue.Queue[tuple[np.ndarray, float]],
+        name: str,
+        converted_audio: np.ndarray,
+        timestamp_seconds: float,
+    ) -> None:
+        try:
+            target.put_nowait((converted_audio.copy(), timestamp_seconds))
+        except queue.Full:
+            if name not in queue_warnings:
+                queue_warnings.add(name)
+                print(
+                    f"[SENTINEL] {name} analysis fell behind; some audio frames "
+                    "may be skipped.",
+                    flush=True,
+                )
 
     def send_notifications() -> None:
         while not notification_stop.is_set() or not notification_queue.empty():
             try:
-                notification_queue.get(timeout=0.1)
+                event = notification_queue.get(timeout=0.1)
             except queue.Empty:
                 continue
             try:
-                notifier.send_noise_detected()
+                notifier.send_alert(event)
                 print("[SENTINEL] Discord notification sent.", flush=True)
             except Exception as exc:
                 print(f"[SENTINEL] Discord notification failed: {exc}", flush=True)
@@ -228,18 +276,36 @@ def run() -> None:
 
     def process_audio() -> None:
         try:
+            processed_samples = 0
+
             def consume(converted_audio: np.ndarray) -> None:
+                nonlocal processed_samples
                 converted_audio = np.asarray(
                     converted_audio,
                     dtype=np.float32,
                 ).reshape(-1)
                 if not converted_audio.size:
                     return
+                timestamp_seconds = processed_samples / 16000
+                for alert in noise_tracker.update(converted_audio, timestamp_seconds):
+                    enqueue_notification(alert)
+                enqueue_audio(
+                    phrase_queue,
+                    "Phrase",
+                    converted_audio,
+                    timestamp_seconds,
+                )
+                enqueue_audio(
+                    alarm_queue,
+                    "Alarm sound",
+                    converted_audio,
+                    timestamp_seconds,
+                )
+                processed_samples += converted_audio.size
                 for frame in detector.detect_stream(converted_audio, 16000):
                     event = tracker.update(frame)
                     if event is not None:
                         _print_event(event)
-                        enqueue_notification(event)
 
             while not stop_event.is_set() or not audio_queue.empty():
                 try:
@@ -257,10 +323,55 @@ def run() -> None:
                 event = tracker.update(frame)
                 if event is not None:
                     _print_event(event)
-                    enqueue_notification(event)
             event = tracker.finish()
             if event is not None:
                 _print_event(event)
+        except BaseException as exc:
+            worker_error.append(exc)
+            stop_event.set()
+
+    def process_phrases() -> None:
+        try:
+            previous_audio_end: float | None = None
+            while not analysis_stop.is_set() or not phrase_queue.empty():
+                try:
+                    audio, timestamp_seconds = phrase_queue.get(timeout=0.1)
+                except queue.Empty:
+                    continue
+                try:
+                    if (
+                        previous_audio_end is not None
+                        and timestamp_seconds - previous_audio_end > 0.01
+                    ):
+                        phrase_detector.reset()
+                    for event in phrase_detector.process(audio, timestamp_seconds):
+                        enqueue_notification(event)
+                    previous_audio_end = timestamp_seconds + audio.size / 16000
+                finally:
+                    phrase_queue.task_done()
+        except BaseException as exc:
+            worker_error.append(exc)
+            stop_event.set()
+
+    def process_alarm_sounds() -> None:
+        try:
+            previous_audio_end: float | None = None
+            while not analysis_stop.is_set() or not alarm_queue.empty():
+                try:
+                    audio, timestamp_seconds = alarm_queue.get(timeout=0.1)
+                except queue.Empty:
+                    continue
+                try:
+                    if (
+                        previous_audio_end is not None
+                        and timestamp_seconds - previous_audio_end > 0.01
+                    ):
+                        alarm_stream.reset()
+                    for event in alarm_stream.push(audio, timestamp_seconds):
+                        enqueue_notification(event)
+                    previous_audio_end = timestamp_seconds + audio.size / 16000
+                finally:
+                    alarm_queue.task_done()
         except BaseException as exc:
             worker_error.append(exc)
             stop_event.set()
@@ -271,6 +382,18 @@ def run() -> None:
         daemon=True,
     )
     worker.start()
+    phrase_worker = threading.Thread(
+        target=process_phrases,
+        name="sentinel-phrase-detector",
+        daemon=True,
+    )
+    alarm_worker = threading.Thread(
+        target=process_alarm_sounds,
+        name="sentinel-alarm-classifier",
+        daemon=True,
+    )
+    phrase_worker.start()
+    alarm_worker.start()
     notification_worker: threading.Thread | None = None
     if notifier.enabled:
         notification_worker = threading.Thread(
@@ -286,6 +409,10 @@ def run() -> None:
             "SENTINEL_DISCORD_WEBHOOK_URL to enable.",
             flush=True,
         )
+    print(
+        "[SENTINEL] Alert tiers: noise, attention phrase, emergency phrase or sound.",
+        flush=True,
+    )
     print(f"[SENTINEL] Audio stream starting: {device_name} at {input_rate} Hz.", flush=True)
 
     try:
@@ -306,12 +433,19 @@ def run() -> None:
     finally:
         stop_event.set()
         worker.join(timeout=10)
+        analysis_stop.set()
+        phrase_worker.join(timeout=10)
+        alarm_worker.join(timeout=10)
         notification_stop.set()
         if notification_worker is not None:
             notification_worker.join(timeout=10)
 
     if worker.is_alive():
         raise RuntimeError("Audio processing worker did not stop cleanly.")
+    if phrase_worker.is_alive():
+        raise RuntimeError("Phrase detection worker did not stop cleanly.")
+    if alarm_worker.is_alive():
+        raise RuntimeError("Alarm sound detection worker did not stop cleanly.")
     if notification_worker is not None and notification_worker.is_alive():
         raise RuntimeError("Notification worker did not stop cleanly.")
     if worker_error:

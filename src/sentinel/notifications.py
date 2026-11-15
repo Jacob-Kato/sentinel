@@ -9,6 +9,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
+from sentinel.detection.alerts import AlertEvent, AlertTier
+
 
 class DiscordWebhookNotifier:
     """Post short event messages to a Discord channel webhook."""
@@ -46,8 +48,8 @@ class DiscordWebhookNotifier:
     def enabled(self) -> bool:
         return bool(self.webhook_url)
 
-    def send_noise_detected(self) -> bool:
-        """Send one notification; return False when no webhook is configured."""
+    def send_alert(self, event: AlertEvent) -> bool:
+        """Send one tiered notification; return False without a webhook."""
         if not self.enabled:
             return False
 
@@ -57,8 +59,13 @@ class DiscordWebhookNotifier:
         url = urlunsplit(
             (parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment)
         )
+        prefix = {
+            AlertTier.NOISE: "",
+            AlertTier.ATTENTION: "ATTENTION: ",
+            AlertTier.EMERGENCY: "EMERGENCY: ",
+        }[event.tier]
         payload = {
-            "content": "Noise detected.",
+            "content": f"{prefix}{event.message}",
             "username": "Sentinel",
             "allowed_mentions": {"parse": []},
         }
@@ -95,3 +102,9 @@ class DiscordWebhookNotifier:
         except URLError as exc:
             raise RuntimeError(f"Could not reach Discord: {exc.reason}") from exc
         return True
+
+    def send_noise_detected(self) -> bool:
+        """Keep the original one-line noise notification API available."""
+        return self.send_alert(
+            AlertEvent(AlertTier.NOISE, "Noise detected.", timestamp_seconds=0.0)
+        )
