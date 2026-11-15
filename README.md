@@ -90,6 +90,26 @@ sure **Mobile Push Notifications** and the Discord notifications permission
 in your phone's system settings are enabled. If the server is set to mentions
 only, the webhook message will not alert you because it does not mention you.
 
+### Notification cadence and troubleshooting
+
+Sentinel sends one alert at the start of each speech segment, rather than an
+alert for every 32 ms VAD frame. It waits for 8 consecutive non-speech frames
+(about 256 ms of quiet) before ending a segment, so another alert is sent only
+after that quiet gap and a new speech start. This prevents alerts from
+repeating rapidly while someone keeps speaking.
+
+Discord's Android app can group several messages from one channel into one
+notification; its **Notify on every new message in conversations** setting
+controls whether later messages also make a sound or buzz. Discord also does
+not send a push while the app is open and in focus. On iOS, notification
+grouping is controlled under **Settings → Notifications → Discord**. See
+Discord's [mobile notification guide](https://support.discord.com/hc/en-us/articles/218892547--Mobile-Notifications-Settings-101).
+In the Sentinel terminal, each new event should produce both `Speech detected` and
+`Discord notification sent`. If those lines repeat but the phone only alerts
+once, check Discord and phone notification settings. If `Speech detected`
+doesn't repeat, leave at least a quarter-second of quiet between speech
+segments.
+
 ## Project Status
 
 Early development. The live speech check continuously captures audio and

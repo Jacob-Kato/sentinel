@@ -41,6 +41,24 @@ def test_noise_alert_posts_json_to_configured_discord_webhook():
     assert timeout == 5.0
 
 
+def test_each_new_event_creates_a_new_webhook_request():
+    requests = []
+
+    def fake_opener(request, timeout):
+        requests.append(request)
+        return FakeResponse()
+
+    notifier = DiscordWebhookNotifier(
+        webhook_url="https://discord.com/api/webhooks/123/secret-token",
+        opener=fake_opener,
+    )
+
+    assert notifier.send_noise_detected()
+    assert notifier.send_noise_detected()
+
+    assert len(requests) == 2
+
+
 def test_notifications_are_disabled_without_a_webhook_url():
     notifier = DiscordWebhookNotifier(webhook_url=None)
 

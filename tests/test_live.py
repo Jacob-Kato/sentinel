@@ -52,6 +52,22 @@ def test_tracker_does_not_emit_start_for_single_positive_frame():
     assert not tracker.speaking
 
 
+def test_tracker_emits_a_new_start_after_speech_ends():
+    tracker = SpeechStateTracker(start_frames=1, hangover_frames=2)
+
+    first_start = tracker.update(make_frame(0.0, True))
+    assert first_start is not None
+    assert first_start.kind == "speech_started"
+    assert tracker.update(make_frame(0.032, False)) is None
+    first_end = tracker.update(make_frame(0.064, False))
+    assert first_end is not None
+    assert first_end.kind == "speech_ended"
+
+    second_start = tracker.update(make_frame(0.096, True))
+    assert second_start is not None
+    assert second_start.kind == "speech_started"
+
+
 def test_uses_available_usb_input_when_no_default_is_selected(monkeypatch):
     devices = [
         {"name": "HDMI Output", "max_input_channels": 0},

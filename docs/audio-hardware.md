@@ -39,6 +39,12 @@ printed to the terminal. If a Discord webhook URL is configured, a separate
 worker also sends a notification when speech starts. Raw audio is held in
 memory only and is not written to disk.
 
+One notification is sent per speech segment, not per VAD frame. The speech
+tracker requires 8 consecutive non-speech frames (about 256 ms) to end a
+segment, which prevents repeated alerts during continuous speech. Discord
+mobile may group several channel messages into one push notification; the
+Sentinel terminal logs each successful webhook send separately.
+
 No audio recordings are written to disk by the microphone module.
 
 ## Future Improvements

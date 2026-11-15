@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-11-14 — Repeated Discord Notification Guidance
+
+### Changed
+- Documented that Sentinel sends one notification per speech segment and
+  requires about 256 ms of silence before a later segment can trigger another.
+- Documented Discord mobile's message grouping and foreground notification
+  behavior to help distinguish app-level suppression from VAD behavior.
+
+### Tested
+- Added regression coverage for separate speech segments and repeated webhook
+  requests.
+
 ## 2026-11-14 — Microphone Default Fallback
 
 ### Fixed
