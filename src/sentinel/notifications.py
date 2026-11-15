@@ -75,8 +75,17 @@ class DiscordWebhookNotifier:
                 if not 200 <= status < 300:
                     raise RuntimeError(f"Discord returned HTTP {status}.")
         except HTTPError as exc:
+            detail = ""
+            try:
+                error_body = json.loads(exc.read(4096).decode("utf-8"))
+                code = error_body.get("code")
+                message = error_body.get("message")
+                if code is not None or message:
+                    detail = f"; Discord code {code}: {message or 'unspecified error'}"
+            except (UnicodeDecodeError, json.JSONDecodeError, AttributeError):
+                pass
             raise RuntimeError(
-                f"Discord rejected the webhook (HTTP {exc.code})."
+                f"Discord rejected the webhook (HTTP {exc.code}{detail})."
             ) from exc
         except URLError as exc:
             raise RuntimeError(f"Could not reach Discord: {exc.reason}") from exc

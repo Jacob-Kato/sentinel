@@ -1,4 +1,6 @@
 import json
+from io import BytesIO
+from urllib.error import HTTPError
 
 import pytest
 
@@ -52,3 +54,25 @@ def test_rejects_non_discord_or_non_https_webhook_urls():
 
     with pytest.raises(ValueError):
         DiscordWebhookNotifier("https://example.com/api/webhooks/123/token")
+
+
+def test_http_error_includes_discord_reason_without_webhook_url():
+    webhook_url = "https://discord.com/api/webhooks/123/private-token"
+
+    def rejected_request(request, timeout):
+        raise HTTPError(
+            request.full_url,
+            403,
+            "Forbidden",
+            {},
+            BytesIO(b'{"code":50027,"message":"Invalid Webhook Token"}'),
+        )
+
+    notifier = DiscordWebhookNotifier(webhook_url, opener=rejected_request)
+
+    with pytest.raises(RuntimeError) as error:
+        notifier.send_noise_detected()
+
+    assert "50027" in str(error.value)
+    assert "Invalid Webhook Token" in str(error.value)
+    assert "private-token" not in str(error.value)

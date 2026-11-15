@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-11-14 — Discord Webhook Error Details
+
+### Changed
+- Include Discord's HTTP error code and message when webhook delivery fails,
+  while keeping the webhook URL out of the log.
+
+### Tested
+- Added a mocked 403 response test confirming the Discord error is surfaced
+  without exposing the configured webhook URL.
+- Notification tests: 4 passed; Ruff checks passed.
+
 ## 2026-11-14 — Discord Speech Alerts
 
 ### Changed
