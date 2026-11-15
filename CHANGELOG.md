@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-11-14 — Stateful Silero Streaming
+
+### Added
+- Added `detect_stream()` to preserve Silero recurrent state and 64-sample
+  context across audio blocks, buffering input until complete 512-sample frames
+  are available.
+- Added `reset_stream()` to clear model state, buffered samples, and stream
+  timestamps before an independent stream.
+- Added tests covering streaming state continuity, partial-frame buffering, and
+  reset behavior.
+
+### Tested
+- Silero test suite: 14 passed.
+- Ruff checks passed for the repository.
+- Full-suite collection is currently blocked by missing `sounddevice` and
+  `webrtcvad` packages in the test environment.
+
 ## 2026-11-14
 
 ### Added

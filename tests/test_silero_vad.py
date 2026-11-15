@@ -100,6 +100,34 @@ def test_state_resets_between_recordings(audio):
     assert np.all(second_recording_state == 0)
 
 
+def test_detect_stream_carries_state_and_buffers_partial_frames():
+    session = FakeONNXSession()
+    vad = SileroVAD(session=session)
+
+    first = vad.detect_stream(np.zeros(768, dtype=np.float32), 16000)
+    second = vad.detect_stream(np.zeros(256, dtype=np.float32), 16000)
+
+    assert len(first) == 1
+    assert len(second) == 1
+    assert first[0].timestamp_seconds == 0
+    assert second[0].timestamp_seconds == pytest.approx(0.032)
+    assert np.all(session.calls[0]["state"] == 0)
+    assert np.all(session.calls[1]["state"] == 1)
+
+
+def test_reset_stream_clears_state_context_and_timestamp():
+    session = FakeONNXSession()
+    vad = SileroVAD(session=session)
+
+    vad.detect_stream(np.ones(512, dtype=np.float32), 16000)
+    vad.reset_stream()
+    results = vad.detect_stream(np.zeros(512, dtype=np.float32), 16000)
+
+    assert results[0].timestamp_seconds == 0
+    assert np.all(session.calls[1]["state"] == 0)
+    assert np.all(session.calls[1]["input"][:, :64] == 0)
+
+
 def test_rejects_unsupported_sample_rate(audio):
     vad = SileroVAD(session=FakeONNXSession())
 

@@ -11,6 +11,7 @@ Personal Sentinel — an audio-based environmental awareness prototype.
 ### Initial Capabilities
 
 - Capture audio using a Raspberry Pi microphone.
+- Classify speech using WebRTC VAD or ONNX-based Silero VAD.
 - Detect selected spoken phrases.
 - Identify possible emergency sounds.
 - Convert detections into structured events.
@@ -34,4 +35,7 @@ Personal Sentinel — an audio-based environmental awareness prototype.
 
 ## Project Status
 
-Early development. Features are not yet implemented.
+Early development. Audio capture and batch voice activity detection are
+implemented. Silero VAD also exposes a stateful streaming interface that keeps
+model state across blocks; continuous microphone capture and speech event
+output are not yet wired together.

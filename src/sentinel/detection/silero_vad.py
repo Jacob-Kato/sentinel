@@ -59,15 +59,23 @@ class SileroVAD:
             )
 
         self.session = session
+        self.reset_stream()
 
-    def detect(
+    def reset_stream(self) -> None:
+        """Start a new independent stream, clearing model and audio state."""
+        self._state = np.zeros((2, 1, 128), dtype=np.float32)
+        self._context = np.zeros((1, self.CONTEXT_SIZE), dtype=np.float32)
+        self._pending = np.empty(0, dtype=np.float32)
+        self._samples_processed = 0
+
+    def _validate_audio(
         self,
         audio: npt.NDArray[np.float32],
         sample_rate: int,
-    ) -> list[SileroVADFrame]:
-        if isinstance(sample_rate, bool) or not isinstance(
-            sample_rate, int
-        ):
+        *,
+        allow_empty: bool = False,
+    ) -> npt.NDArray[np.float32]:
+        if isinstance(sample_rate, bool) or not isinstance(sample_rate, int):
             raise TypeError("Sample rate must be an integer.")
 
         if sample_rate != self.SAMPLE_RATE:
@@ -79,7 +87,7 @@ class SileroVAD:
         if audio.ndim != 1:
             raise ValueError("Audio must be mono (one-dimensional).")
 
-        if audio.size == 0:
+        if audio.size == 0 and not allow_empty:
             raise ValueError("Audio cannot be empty.")
 
         if not np.issubdtype(audio.dtype, np.floating):
@@ -91,11 +99,73 @@ class SileroVAD:
         if np.any(np.abs(audio) > 1.0):
             raise ValueError("Audio samples must be between -1.0 and 1.0.")
 
-        audio = audio.astype(np.float32, copy=False)
+        return audio.astype(np.float32, copy=False)
 
-        state = np.zeros((2, 1, 128), dtype=np.float32)
-        context = np.zeros((1, self.CONTEXT_SIZE), dtype=np.float32)
+    def _infer_frame(
+        self,
+        chunk: npt.NDArray[np.float32],
+        timestamp_seconds: float,
+        valid_samples: int,
+    ) -> SileroVADFrame:
+        model_input = np.concatenate((self._context, chunk.reshape(1, -1)), axis=1)
+        output, self._state = self.session.run(
+            None,
+            {
+                "input": model_input.astype(np.float32, copy=False),
+                "state": self._state,
+                "sr": np.array(self.SAMPLE_RATE, dtype=np.int64),
+            },
+        )
 
+        probability = float(output[0][0])
+        if not 0.0 <= probability <= 1.0:
+            raise RuntimeError(f"Model returned invalid probability: {probability}")
+
+        self._context = chunk.reshape(1, -1)[:, -self.CONTEXT_SIZE :].copy()
+        return SileroVADFrame(
+            timestamp_seconds=timestamp_seconds,
+            speech_probability=probability,
+            is_speech=probability >= self.threshold,
+            duration_seconds=valid_samples / self.SAMPLE_RATE,
+        )
+
+    def detect_stream(
+        self,
+        audio: npt.NDArray[np.float32],
+        sample_rate: int,
+    ) -> list[SileroVADFrame]:
+        """Process an audio block while retaining state across consecutive calls.
+
+        Only complete 512-sample frames are inferred. Any remainder is buffered
+        until the next call; call ``reset_stream`` before a new independent
+        stream to discard that remainder and clear recurrent model state.
+        """
+        audio = self._validate_audio(audio, sample_rate, allow_empty=True)
+        if audio.size == 0:
+            return []
+
+        self._pending = np.concatenate((self._pending, audio))
+        results = []
+        while self._pending.size >= self.CHUNK_SIZE:
+            chunk = self._pending[: self.CHUNK_SIZE]
+            self._pending = self._pending[self.CHUNK_SIZE :]
+            results.append(
+                self._infer_frame(
+                    chunk,
+                    self._samples_processed / self.SAMPLE_RATE,
+                    self.CHUNK_SIZE,
+                )
+            )
+            self._samples_processed += self.CHUNK_SIZE
+        return results
+
+    def detect(
+        self,
+        audio: npt.NDArray[np.float32],
+        sample_rate: int,
+    ) -> list[SileroVADFrame]:
+        audio = self._validate_audio(audio, sample_rate)
+        self.reset_stream()
         results = []
 
         for start in range(0, len(audio), self.CHUNK_SIZE):
@@ -110,36 +180,13 @@ class SileroVAD:
 
             chunk = chunk.reshape(1, self.CHUNK_SIZE)
 
-            model_input = np.concatenate(
-                (context, chunk),
-                axis=1,
-            ).astype(np.float32)
-
-            output, state = self.session.run(
-                None,
-                {
-                    "input": model_input,
-                    "state": state,
-                    "sr": np.array(self.SAMPLE_RATE, dtype=np.int64),
-                },
-            )
-
-            probability = float(output[0][0])
-
-            if not 0.0 <= probability <= 1.0:
-                raise RuntimeError(
-                    f"Model returned invalid probability: {probability}"
-                )
-
             results.append(
-                SileroVADFrame(
-                    timestamp_seconds=start / self.SAMPLE_RATE,
-                    speech_probability=probability,
-                    is_speech=probability >= self.threshold,
-                    duration_seconds=valid_samples / self.SAMPLE_RATE,
+                self._infer_frame(
+                    chunk,
+                    start / self.SAMPLE_RATE,
+                    valid_samples,
                 )
             )
-
-            context = chunk[:, -self.CONTEXT_SIZE :].copy()
+            self._samples_processed += valid_samples
 
         return results
