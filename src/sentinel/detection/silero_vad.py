@@ -159,6 +159,22 @@ class SileroVAD:
             self._samples_processed += self.CHUNK_SIZE
         return results
 
+    def flush_stream(self) -> list[SileroVADFrame]:
+        """Process any final partial frame when a stream is ending."""
+        if self._pending.size == 0:
+            return []
+
+        valid_samples = self._pending.size
+        chunk = np.pad(self._pending, (0, self.CHUNK_SIZE - valid_samples))
+        self._pending = np.empty(0, dtype=np.float32)
+        frame = self._infer_frame(
+            chunk,
+            self._samples_processed / self.SAMPLE_RATE,
+            valid_samples,
+        )
+        self._samples_processed += valid_samples
+        return [frame]
+
     def detect(
         self,
         audio: npt.NDArray[np.float32],

@@ -26,6 +26,11 @@ vad-silero = [
     "onnxruntime>=1.16.1",
 ]
 
+live = [
+    "onnxruntime>=1.16.1",
+    "soxr",
+]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 

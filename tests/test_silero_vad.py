@@ -128,6 +128,19 @@ def test_reset_stream_clears_state_context_and_timestamp():
     assert np.all(session.calls[1]["input"][:, :64] == 0)
 
 
+def test_flush_stream_processes_final_partial_frame():
+    session = FakeONNXSession()
+    vad = SileroVAD(session=session)
+
+    assert vad.detect_stream(np.zeros(100, dtype=np.float32), 16000) == []
+    results = vad.flush_stream()
+
+    assert len(results) == 1
+    assert results[0].duration_seconds == pytest.approx(100 / 16000)
+    assert np.all(session.calls[0]["input"][:, -412:] == 0)
+    assert vad.flush_stream() == []
+
+
 def test_rejects_unsupported_sample_rate(audio):
     vad = SileroVAD(session=FakeONNXSession())
 

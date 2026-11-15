@@ -33,9 +33,37 @@ Personal Sentinel — an audio-based environmental awareness prototype.
 4. Deploy to Raspberry Pi.
 5. Test against physical hardware.
 
+## Live Speech Check
+
+On Raspberry Pi OS 64-bit, clone this repository and start the prototype with:
+
+```bash
+git clone https://github.com/Jacob-Kato/sentinel.git
+cd sentinel
+./run_sentinel.sh
+```
+
+On first run, the script installs PortAudio support, creates `.venv`, and
+downloads the Python dependencies, including ONNX Runtime and the streaming
+resampler. It then starts listening. Press `Ctrl+C` to stop. The script uses
+the operating system's default input microphone and does not save raw audio.
+
+To select a particular input device, set `SENTINEL_DEVICE` to its PortAudio
+index or name before starting. The capture rate defaults to the device's
+reported default and is resampled to 16 kHz for Silero VAD.
+
+To see available input devices if the wrong microphone is selected:
+
+```bash
+.venv/bin/python -c 'import sounddevice as sd; print(sd.query_devices())'
+SENTINEL_DEVICE=1 ./run_sentinel.sh
+```
+
+Speak near the microphone. The terminal should print `Speech detected`, then
+`Speech ended` after a short quiet pause. Press `Ctrl+C` to stop listening.
+
 ## Project Status
 
-Early development. Audio capture and batch voice activity detection are
-implemented. Silero VAD also exposes a stateful streaming interface that keeps
-model state across blocks; continuous microphone capture and speech event
-output are not yet wired together.
+Early development. The live speech check continuously captures audio and
+reports speech start/end transitions. Selected phrase recognition, emergency
+sound classification, and phone notifications are not implemented yet.

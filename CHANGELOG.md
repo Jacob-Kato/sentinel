@@ -1,5 +1,30 @@
 # Changelog
 
+## 2026-11-14 — Live Speech/Silence Prototype
+
+### Added
+- Added an asynchronous live microphone monitor using `sounddevice.InputStream`,
+  a bounded audio queue, a processing worker, SoXR streaming resampling, and
+  Silero VAD.
+- Added stable speech-start and speech-end terminal events with start
+  confirmation and silence hangover.
+- Added `run_sentinel.sh`, which performs first-run setup when dependencies are
+  missing, and `scripts/setup_pi.sh` for Raspberry Pi OS dependencies.
+- Added state-transition and end-of-stream tests.
+
+### Notes
+- The monitor does not save raw audio. Microphone callback errors or a full
+  processing queue stop the stream with an explicit error.
+- Raspberry Pi 5 hardware behavior and ARM64 package installation still need
+  verification on the device.
+
+### Tested
+- Speech-state tests and Silero tests: 18 passed.
+- Ruff checks, shell syntax, and whitespace checks passed.
+- Real ONNX model processed one second of synthetic silence; maximum speech
+  probability was 0.0089.
+- SoXR streaming resampler converted 44.1 kHz input to 16 kHz output.
+
 ## 2026-11-14 — Stateful Silero Streaming
 
 ### Added

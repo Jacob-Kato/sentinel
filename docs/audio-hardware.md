@@ -30,16 +30,20 @@ The capture configuration was changed to 44,100 Hz.
 
 ## Current Audio Pipeline
 
-USB Microphone → SoundDevice → NumPy Audio Array
+USB Microphone → SoundDevice InputStream → bounded audio queue → SoXR
+streaming resampler → Silero VAD at 16,000 Hz
 
-Audio is captured in one-second chunks and returned as float32 samples.
+The capture callback only copies microphone blocks into the queue. A separate
+worker performs resampling and VAD inference. Speech start/end transitions are
+printed to the terminal. Raw audio is held in memory only and is not written to
+disk.
 
 No audio recordings are written to disk by the microphone module.
 
 ## Future Improvements
 
-- Implement continuous audio streaming.
-- Add audio preprocessing.
-- Resample captured audio to 16,000 Hz for compatible detection models.
+- Verify capture rates and default device behavior on Raspberry Pi 5.
+- Measure CPU, memory, inference latency, and queue stability during extended
+  listening on Raspberry Pi 5.
 - Add hardware-independent microphone tests.
 - Investigate NumPy deprecation warnings.
