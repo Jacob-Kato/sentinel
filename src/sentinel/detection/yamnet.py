@@ -23,6 +23,8 @@ EMERGENCY_CLASSES = {
     393: "smoke detector alarm",
     394: "fire alarm",
 }
+ATTENTION_CLASSES = {353: "knock"}
+SOUND_CLASSES = {**ATTENTION_CLASSES, **EMERGENCY_CLASSES}
 
 
 class YamnetAlarmDetector:
@@ -34,15 +36,21 @@ class YamnetAlarmDetector:
         threshold: float = 0.25,
         confirmation_windows: int = 2,
         clear_windows: int = 4,
+        knock_threshold: float = 0.4,
+        detect_knocks: bool = True,
     ) -> None:
         if not 0 < threshold <= 1:
             raise ValueError("Alarm confidence threshold must be in (0, 1].")
+        if not 0 < knock_threshold <= 1:
+            raise ValueError("Knock confidence threshold must be in (0, 1].")
         if not 1 <= confirmation_windows <= 3 or clear_windows < 1:
             raise ValueError(
                 "Confirmation windows must be 1-3 and clear windows must be positive."
             )
         self.interpreter = interpreter
         self.threshold = threshold
+        self.knock_threshold = knock_threshold
+        self.detect_knocks = detect_knocks
         self.confirmation_windows = confirmation_windows
         self.clear_windows = clear_windows
         self.interpreter.allocate_tensors()
@@ -50,8 +58,8 @@ class YamnetAlarmDetector:
         self.output_details: list[dict[str, Any]]
         self.input_detail = interpreter.get_input_details()[0]
         self.output_details = interpreter.get_output_details()
-        self._recent: deque[tuple[int, float] | None] = deque(maxlen=3)
-        self._active_class: int | None = None
+        self._recent: deque[tuple[AlertTier, int, float] | None] = deque(maxlen=3)
+        self._active_detection: tuple[AlertTier, int] | None = None
         self._clear_run = 0
 
     @classmethod
@@ -59,6 +67,8 @@ class YamnetAlarmDetector:
         cls,
         path: str | Path = MODEL_PATH,
         threshold: float = 0.25,
+        knock_threshold: float = 0.4,
+        detect_knocks: bool = True,
     ) -> YamnetAlarmDetector:
         model_path = Path(path)
         if not model_path.is_file():
@@ -75,13 +85,22 @@ class YamnetAlarmDetector:
         return cls(
             Interpreter(model_path=str(model_path), num_threads=2),
             threshold=threshold,
+            knock_threshold=knock_threshold,
+            detect_knocks=detect_knocks,
         )
 
     @classmethod
     def from_environment(cls) -> YamnetAlarmDetector:
         path = os.environ.get("SENTINEL_YAMNET_MODEL_PATH", MODEL_PATH)
         threshold = float(os.environ.get("SENTINEL_ALARM_THRESHOLD", "0.25"))
-        return cls.from_model(path, threshold)
+        knock_threshold = float(os.environ.get("SENTINEL_KNOCK_THRESHOLD", "0.4"))
+        detect_knocks = os.environ.get("SENTINEL_DETECT_KNOCKS", "1").casefold()
+        return cls.from_model(
+            path,
+            threshold,
+            knock_threshold,
+            detect_knocks not in {"0", "false", "no", "off"},
+        )
 
     def classify_window(
         self,
@@ -110,43 +129,73 @@ class YamnetAlarmDetector:
         self.interpreter.set_tensor(self.input_detail["index"], tensor)
         self.interpreter.invoke()
         scores = self._read_scores()
-        candidates = [
-            (index, float(scores[index]))
-            for index in EMERGENCY_CLASSES
-            if index < scores.size and scores[index] >= self.threshold
-        ]
-        candidate = max(candidates, key=lambda item: item[1]) if candidates else None
+        candidates: list[tuple[AlertTier, int, float]] = []
+        for index in SOUND_CLASSES:
+            if index in ATTENTION_CLASSES and not self.detect_knocks:
+                continue
+            if index >= scores.size:
+                continue
+            confidence = float(scores[index])
+            tier = (
+                AlertTier.ATTENTION
+                if index in ATTENTION_CLASSES
+                else AlertTier.EMERGENCY
+            )
+            threshold = (
+                self.knock_threshold
+                if tier is AlertTier.ATTENTION
+                else self.threshold
+            )
+            if confidence >= threshold:
+                candidates.append((tier, index, confidence))
+        candidate = (
+            max(candidates, key=lambda item: (item[0], item[2]))
+            if candidates
+            else None
+        )
         self._recent.append(candidate)
 
-        if self._active_class is not None:
-            if candidate is not None and candidate[0] == self._active_class:
+        if self._active_detection is not None:
+            if (
+                candidate is not None
+                and candidate[:2] == self._active_detection
+            ):
                 self._clear_run = 0
             else:
                 self._clear_run += 1
                 if self._clear_run >= self.clear_windows:
-                    self._active_class = None
+                    self._active_detection = None
                     self._clear_run = 0
-        if self._active_class is not None:
+        if self._active_detection is not None:
             return None
 
-        counts: dict[int, list[float]] = {}
+        counts: dict[tuple[AlertTier, int], list[float]] = {}
         for recent in self._recent:
             if recent is not None:
-                counts.setdefault(recent[0], []).append(recent[1])
+                key = (recent[0], recent[1])
+                counts.setdefault(key, []).append(recent[2])
         confirmed = [
-            (index, max(confidences))
-            for index, confidences in counts.items()
+            (key, max(confidences))
+            for key, confidences in counts.items()
             if len(confidences) >= self.confirmation_windows
         ]
         if not confirmed:
             return None
-        index, confidence = max(confirmed, key=lambda item: item[1])
-        self._active_class = index
+        (tier, index), confidence = max(
+            confirmed,
+            key=lambda item: (item[0][0], item[1]),
+        )
+        self._active_detection = (tier, index)
         self._clear_run = 0
-        sound_name = EMERGENCY_CLASSES[index]
+        sound_name = SOUND_CLASSES[index]
+        message = (
+            "Knock detected."
+            if tier is AlertTier.ATTENTION
+            else f"Emergency sound detected: {sound_name}."
+        )
         return AlertEvent(
-            AlertTier.EMERGENCY,
-            f"Emergency sound detected: {sound_name}.",
+            tier,
+            message,
             timestamp_seconds,
             confidence,
         )
@@ -154,7 +203,7 @@ class YamnetAlarmDetector:
     def reset(self) -> None:
         """Clear temporal alarm state after audio frames have been dropped."""
         self._recent.clear()
-        self._active_class = None
+        self._active_detection = None
         self._clear_run = 0
 
     def _read_scores(self) -> npt.NDArray[np.float32]:

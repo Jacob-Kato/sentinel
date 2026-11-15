@@ -7,7 +7,8 @@ from enum import IntEnum
 
 
 class AlertTier(IntEnum):
-    NOISE = 1
+    SPEECH = 1
+    NOISE = 1  # Backwards-compatible alias for existing callers.
     ATTENTION = 2
     EMERGENCY = 3
 

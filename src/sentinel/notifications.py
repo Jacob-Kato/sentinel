@@ -60,7 +60,7 @@ class DiscordWebhookNotifier:
             (parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment)
         )
         prefix = {
-            AlertTier.NOISE: "",
+            AlertTier.SPEECH: "",
             AlertTier.ATTENTION: "ATTENTION: ",
             AlertTier.EMERGENCY: "EMERGENCY: ",
         }[event.tier]

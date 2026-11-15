@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026-11-15 — Speech-Only Baseline and Expanded Emergency Detection
+
+### Changed
+- Replaced amplitude-triggered baseline notifications with Silero speech
+  activity alerts, so loud nonverbal sounds no longer trigger the baseline
+  tier.
+- Expanded offline emergency phrase recognition and added an environment
+  variable for extra phrases.
+- Added YAMNet knock classification as an attention event, with a confidence
+  threshold and an option to disable it. Alarm/siren classes remain emergency
+  events.
+- Added a speech-active gate to phrase alerts to reduce phrase matches from
+  nonverbal sounds.
+
+### Notes
+- Knock detection uses YAMNet's explicit Knock category and requires two
+  overlapping positive windows. Its accuracy remains dependent on microphone
+  and room testing.
+
 ## 2026-11-15 — Three Alert Tiers
 
 ### Added

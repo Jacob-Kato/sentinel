@@ -66,49 +66,47 @@ callback. Audio is processed locally in memory and is not saved.
 
 ### Three alert tiers
 
-1. **Noise:** A sound above the configurable microphone-level threshold for
-   three consecutive 512-sample frames (about 96 ms) sends `Noise detected.`
-   The event ends after about 768 ms below the threshold. This catches general
-   nearby sound by amplitude; it does not name the sound.
+1. **Speech:** Silero VAD must identify speech in three consecutive frames
+   (about 96 ms) before Sentinel sends `Speech detected.` A clap, bump, or other
+   loud nonverbal sound does not trigger this tier. Other people talking on a
+   TV or nearby can still count as speech.
 2. **Attention:** The offline phrase recognizer listens for **“hey”** or
-   **“excuse me.”** It sends an `ATTENTION` Discord message when a phrase is
-   recognized. The recognizer is constrained to the configured phrases and
-   keeps the audio on the Pi.
-3. **Emergency:** Saying **“help,” “help me,” “emergency,” “fire alarm,”** or
-   **“smoke alarm”** sends an `EMERGENCY` message. In parallel, YAMNet checks
-   overlapping audio windows for **smoke detector alarm, fire alarm, siren,**
-   and **civil defense siren** sounds. The sound classifier waits for repeated
-   positive windows before alerting, which reduces one-off false alarms.
+   **“excuse me.”** The sound classifier also recognizes the AudioSet **Knock**
+   class as an attention event. YAMNet's [class list](https://github.com/tensorflow/models/blob/master/research/audioset/yamnet/yamnet_class_map.csv)
+   includes `Knock` as a distinct sound label. Knock alerts require a score of
+   at least `0.4` in two overlapping windows. This remains probabilistic; tune
+   `SENTINEL_KNOCK_THRESHOLD` upward or set `SENTINEL_DETECT_KNOCKS=0` if
+   ordinary taps cause false alerts. Test with your microphone and room.
+3. **Emergency:** The default spoken triggers include **help, help me, please
+   help, somebody/someone help, I need help, call 911/112, emergency, fire,
+   fire alarm, smoke alarm, carbon monoxide, gas leak, get out, evacuate, call
+   the police, break in,** and **intruder**. Add phrases for your needs with
+   `SENTINEL_EXTRA_EMERGENCY_PHRASES`, as a comma-separated list in `.env`.
+   In parallel, YAMNet checks for **smoke detector alarm, fire alarm, siren,**
+   and **civil defense siren** sounds. These labels are also in YAMNet's
+   [class list](https://github.com/tensorflow/models/blob/master/research/audioset/yamnet/yamnet_class_map.csv).
+   It confirms a sound across multiple windows before alerting.
 
-The first tier uses an RMS amplitude threshold, not an acoustic event model.
-If quiet sounds are missed or background hum causes repeated alerts, tune the
-threshold in `.env` (for example, `SENTINEL_NOISE_RMS_THRESHOLD=0.02`; increase
-it to reduce sensitivity, decrease it to increase sensitivity). `0.015` is the
-default.
-
-YAMNet analyzes approximately 975 ms at a time with overlapping windows. An
-emergency sound alert therefore takes around 1.5 seconds or more after the
-sound begins. Its score is a model confidence, not a probability that a fire
-exists. Sentinel recognizes the *sound* of an alarm; it does not detect smoke,
-carbon monoxide, or fire directly. Keep certified smoke and CO alarms in place
-and do not rely on Sentinel for life-safety monitoring.
+YAMNet analyzes about 0.96 seconds at a time, with a new overlapping window
+every 0.48 seconds. Sound alerts therefore take about 1.5 seconds or more.
+Its score is model confidence, not a probability that a fire exists. Sentinel
+recognizes alarm *sounds*; it does not sense smoke, carbon monoxide, or fire
+directly. Keep certified smoke and CO alarms in place and do not rely on
+Sentinel for life-safety monitoring.
 
 Discord webhooks do not provide a notification-priority setting. Sentinel
 marks higher-tier message text with `ATTENTION:` or `EMERGENCY:`; phone push
 behavior still follows your Discord channel and phone notification settings.
 
-The tiers separate broad sound activity from intentional attention phrases and
-possible emergencies: ordinary sound creates a low-level event, a call for
-attention gets a more direct label, and help/alarm detections are marked
-urgent. This helps avoid treating every sound as an emergency while keeping
-the alert type visible in Discord.
+The tiers separate ordinary speech from explicit requests for attention and
+possible emergencies. This avoids alerting on every bump or sound while keeping
+the event type visible in Discord.
 
-For a quick check, tap or clap near the microphone for the noise tier, say
-“hey” or “excuse me” for attention, and say “help” for the emergency phrase.
-To check the sound classifier, play a smoke alarm or siren recording from a
-second device near Sentinel's microphone. The same sound can first produce a
-noise alert and then an escalated attention or emergency alert as the other
-workers classify it.
+For a quick check, speak a sentence for the speech tier, say “hey” or “excuse
+me” for attention, and say “help” for an emergency phrase. Knock several times
+near the microphone to try the knock classifier. For alarm sounds, play a smoke
+alarm or siren recording from a second device. One speech event can first send
+the speech alert and then a higher-tier alert if a trigger phrase is detected.
 
 ### Send alerts to Discord
 
@@ -123,18 +121,21 @@ On the Pi, create a local `.env` file in the repository:
 ```bash
 cat > .env <<'EOF'
 SENTINEL_DISCORD_WEBHOOK_URL="paste-your-discord-webhook-url-here"
-# Optional: increase to reduce noise alerts; decrease to catch quieter sounds.
-SENTINEL_NOISE_RMS_THRESHOLD="0.015"
 # Optional: decrease to make alarm/siren classification more sensitive.
 SENTINEL_ALARM_THRESHOLD="0.25"
+# Optional: raise to reduce knock alerts, or set 0 to disable knock detection.
+SENTINEL_KNOCK_THRESHOLD="0.4"
+SENTINEL_DETECT_KNOCKS="1"
+# Optional: add your own urgent phrases, separated by commas.
+SENTINEL_EXTRA_EMERGENCY_PHRASES="call my neighbor, get out now"
 EOF
 chmod 600 .env
 ```
 
 Replace the placeholder with the copied URL, then run `./run_sentinel.sh`.
-The launcher reads `.env`; `.env` is ignored by Git. Each detected sound event
-posts a noise-tier alert. Recognized attention phrases and emergency events
-post messages with their tier in the text. Messages do not include audio.
+The launcher reads `.env`; `.env` is ignored by Git. Each speech segment sends
+one speech-tier alert; recognized attention and emergency triggers send their
+own tiered messages. Messages do not include audio.
 
 On your phone, install/open Discord and enable notifications for the server and
 the Sentinel channel. Set that channel to notify for **All Messages** and make
@@ -144,11 +145,11 @@ only, the webhook message will not alert you because it does not mention you.
 
 ### Notification cadence and troubleshooting
 
-Sentinel sends one noise-tier alert when the input rises above the sound
-threshold and rearms after about 768 ms of quiet. Recognized phrases are
-reported once per speech utterance and alarm-classifier alerts are latched
-until the sound has been absent for several analysis windows. This avoids
-posting an alert for every microphone frame or every repeated alarm pulse.
+Sentinel sends one speech-tier alert per VAD segment. It waits for 8
+consecutive non-speech frames (about 256 ms of quiet) before ending a segment.
+Recognized phrases are reported once per speech utterance. Knock and alarm
+classifier alerts are latched until the sound has been absent for several
+analysis windows.
 
 Discord's Android app can group several messages from one channel into one
 notification; its **Notify on every new message in conversations** setting
@@ -163,9 +164,9 @@ settings.
 
 ## Project Status
 
-The live Raspberry Pi prototype supports three local alert tiers: amplitude
-based sound activity, selected spoken attention/emergency phrases, and
-probabilistic sound classification for common alarm and siren classes. Discord
-notifications are supported. Detection thresholds and real-world performance
-still need tuning with the intended microphone and room; this prototype is not
-a certified alarm or life-safety device.
+The live Raspberry Pi prototype supports three local alert tiers: VAD-filtered
+speech, spoken attention/emergency phrases, and probabilistic sound
+classification for knocks, alarms, and sirens. Discord notifications are
+supported. Detection thresholds and real-world performance still need tuning
+with the intended microphone and room; this prototype is not a certified alarm
+or life-safety device.

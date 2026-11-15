@@ -13,7 +13,6 @@ import sounddevice as sd
 import soxr
 
 from sentinel.detection.alerts import AlertEvent, AlertTier
-from sentinel.detection.noise import NoiseActivityTracker
 from sentinel.detection.phrase_detector import VoskPhraseDetector
 from sentinel.detection.silero_vad import SileroVAD, SileroVADFrame
 from sentinel.detection.yamnet import YamnetAlarmDetector, YamnetStream
@@ -168,7 +167,7 @@ def _print_event(event: SpeechEvent) -> None:
 
 def _print_alert(event: AlertEvent) -> None:
     labels = {
-        AlertTier.NOISE: "NOISE",
+        AlertTier.SPEECH: "SPEECH",
         AlertTier.ATTENTION: "ATTENTION",
         AlertTier.EMERGENCY: "EMERGENCY",
     }
@@ -190,7 +189,7 @@ def run() -> None:
     device_name = device_info["name"]
 
     audio_queue: queue.Queue[np.ndarray] = queue.Queue(maxsize=64)
-    phrase_queue: queue.Queue[tuple[np.ndarray, float]] = queue.Queue(maxsize=128)
+    phrase_queue: queue.Queue[tuple[np.ndarray, float, bool]] = queue.Queue(maxsize=128)
     alarm_queue: queue.Queue[tuple[np.ndarray, float]] = queue.Queue(maxsize=128)
     notification_queue: queue.Queue[AlertEvent] = queue.Queue(maxsize=32)
     stop_event = threading.Event()
@@ -198,15 +197,13 @@ def run() -> None:
     notification_stop = threading.Event()
     callback_error: list[str] = []
     worker_error: list[BaseException] = []
-    tracker = SpeechStateTracker()
+    tracker = SpeechStateTracker(start_frames=3)
     notifier = DiscordWebhookNotifier.from_environment()
     resampler = soxr.ResampleStream(input_rate, 16000, 1, dtype="float32")
     detector = SileroVAD()
     phrase_detector = VoskPhraseDetector.from_environment()
     alarm_detector = YamnetAlarmDetector.from_environment()
     alarm_stream = YamnetStream(alarm_detector)
-    noise_threshold = float(os.environ.get("SENTINEL_NOISE_RMS_THRESHOLD", "0.015"))
-    noise_tracker = NoiseActivityTracker(threshold_rms=noise_threshold)
     started_at = time.monotonic()
     queue_warnings: set[str] = set()
 
@@ -260,6 +257,24 @@ def run() -> None:
                     flush=True,
                 )
 
+    def enqueue_phrase_audio(
+        converted_audio: np.ndarray,
+        timestamp_seconds: float,
+        speech_active: bool,
+    ) -> None:
+        try:
+            phrase_queue.put_nowait(
+                (converted_audio.copy(), timestamp_seconds, speech_active)
+            )
+        except queue.Full:
+            if "Phrase" not in queue_warnings:
+                queue_warnings.add("Phrase")
+                print(
+                    "[SENTINEL] Phrase analysis fell behind; some audio frames "
+                    "may be skipped.",
+                    flush=True,
+                )
+
     def send_notifications() -> None:
         while not notification_stop.is_set() or not notification_queue.empty():
             try:
@@ -287,13 +302,28 @@ def run() -> None:
                 if not converted_audio.size:
                     return
                 timestamp_seconds = processed_samples / 16000
-                for alert in noise_tracker.update(converted_audio, timestamp_seconds):
-                    enqueue_notification(alert)
-                enqueue_audio(
-                    phrase_queue,
-                    "Phrase",
+                processed_samples += converted_audio.size
+                chunk_contains_speech = tracker.speaking
+                for frame in detector.detect_stream(converted_audio, 16000):
+                    event = tracker.update(frame)
+                    if frame.is_speech:
+                        chunk_contains_speech = True
+                    if event is not None:
+                        if event.kind == "speech_started":
+                            enqueue_notification(
+                                AlertEvent(
+                                    AlertTier.SPEECH,
+                                    "Speech detected.",
+                                    event.timestamp_seconds,
+                                    event.speech_probability,
+                                )
+                            )
+                        else:
+                            _print_event(event)
+                enqueue_phrase_audio(
                     converted_audio,
                     timestamp_seconds,
+                    chunk_contains_speech,
                 )
                 enqueue_audio(
                     alarm_queue,
@@ -301,11 +331,6 @@ def run() -> None:
                     converted_audio,
                     timestamp_seconds,
                 )
-                processed_samples += converted_audio.size
-                for frame in detector.detect_stream(converted_audio, 16000):
-                    event = tracker.update(frame)
-                    if event is not None:
-                        _print_event(event)
 
             while not stop_event.is_set() or not audio_queue.empty():
                 try:
@@ -333,9 +358,12 @@ def run() -> None:
     def process_phrases() -> None:
         try:
             previous_audio_end: float | None = None
+            last_speech_end: float | None = None
             while not analysis_stop.is_set() or not phrase_queue.empty():
                 try:
-                    audio, timestamp_seconds = phrase_queue.get(timeout=0.1)
+                    audio, timestamp_seconds, speech_active = phrase_queue.get(
+                        timeout=0.1
+                    )
                 except queue.Empty:
                     continue
                 try:
@@ -344,8 +372,15 @@ def run() -> None:
                         and timestamp_seconds - previous_audio_end > 0.01
                     ):
                         phrase_detector.reset()
+                    if speech_active:
+                        last_speech_end = timestamp_seconds + audio.size / 16000
                     for event in phrase_detector.process(audio, timestamp_seconds):
-                        enqueue_notification(event)
+                        if (
+                            speech_active
+                            or last_speech_end is not None
+                            and timestamp_seconds - last_speech_end <= 1.0
+                        ):
+                            enqueue_notification(event)
                     previous_audio_end = timestamp_seconds + audio.size / 16000
                 finally:
                     phrase_queue.task_done()
@@ -410,7 +445,7 @@ def run() -> None:
             flush=True,
         )
     print(
-        "[SENTINEL] Alert tiers: noise, attention phrase, emergency phrase or sound.",
+        "[SENTINEL] Alert tiers: speech, attention phrase or knock, emergency phrase or sound.",
         flush=True,
     )
     print(f"[SENTINEL] Audio stream starting: {device_name} at {input_rate} Hz.", flush=True)
