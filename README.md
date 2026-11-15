@@ -64,6 +64,11 @@ Silero VAD, phrase recognition, sound classification, and Discord publishing
 run on separate workers so model inference does not run inside the microphone
 callback. Audio is processed locally in memory and is not saved.
 
+Sentinel keeps listening during silence and prints `Still listening...` every
+10 seconds as a heartbeat. Resampled microphone samples are clamped to the
+valid normalized audio range before they reach the detectors, so brief
+resampling overshoots do not terminate the listener.
+
 ### Three alert tiers
 
 1. **Speech:** Silero VAD must identify speech in three consecutive frames

@@ -301,6 +301,10 @@ def run() -> None:
                 ).reshape(-1)
                 if not converted_audio.size:
                     return
+                # Resampling filters can overshoot the normalized audio range
+                # by a small amount near sharp transients. Keep all downstream
+                # detectors within their documented [-1, 1] input range.
+                np.clip(converted_audio, -1.0, 1.0, out=converted_audio)
                 timestamp_seconds = processed_samples / 16000
                 processed_samples += converted_audio.size
                 chunk_contains_speech = tracker.speaking
@@ -461,8 +465,12 @@ def run() -> None:
         ):
             print("[SENTINEL] Audio stream started.", flush=True)
             print("[SENTINEL] Listening... (press Ctrl+C to stop)", flush=True)
-            while not stop_event.wait(0.2):
-                pass
+            next_status_time = time.monotonic() + 10.0
+            while not stop_event.is_set():
+                if stop_event.wait(max(0.0, next_status_time - time.monotonic())):
+                    break
+                print("[SENTINEL] Still listening...", flush=True)
+                next_status_time = time.monotonic() + 10.0
     except KeyboardInterrupt:
         print("[SENTINEL] Stopping...", flush=True)
     finally:

@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-11-15 — Keep Listening Through Silence and Resampler Peaks
+
+### Fixed
+- Clamp resampled audio to the valid detector range, preventing brief filter
+  overshoots from crashing the audio worker.
+- Keep the live listener running through quiet periods and print a status line
+  every 10 seconds so a silent room does not look like a stopped process.
+
 ## 2026-11-15 — Speech-Only Baseline and Expanded Emergency Detection
 
 ### Changed
