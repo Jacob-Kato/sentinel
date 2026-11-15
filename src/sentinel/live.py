@@ -13,6 +13,7 @@ import sounddevice as sd
 import soxr
 
 from sentinel.detection.silero_vad import SileroVAD, SileroVADFrame
+from sentinel.notifications import NtfyNotifier
 
 
 @dataclass(frozen=True)
@@ -127,10 +128,13 @@ def run() -> None:
     device_name = device_info["name"]
 
     audio_queue: queue.Queue[np.ndarray] = queue.Queue(maxsize=64)
+    notification_queue: queue.Queue[SpeechEvent] = queue.Queue(maxsize=16)
     stop_event = threading.Event()
+    notification_stop = threading.Event()
     callback_error: list[str] = []
     worker_error: list[BaseException] = []
     tracker = SpeechStateTracker()
+    notifier = NtfyNotifier.from_environment()
     resampler = soxr.ResampleStream(input_rate, 16000, 1, dtype="float32")
     detector = SileroVAD()
     started_at = time.monotonic()
@@ -156,6 +160,31 @@ def run() -> None:
             fail("Audio processing fell behind; the bounded audio queue is full.")
             raise sd.CallbackAbort
 
+    def enqueue_notification(event: SpeechEvent) -> None:
+        if event.kind != "speech_started" or not notifier.enabled:
+            return
+        try:
+            notification_queue.put_nowait(event)
+        except queue.Full:
+            print(
+                "[SENTINEL] Notification queue is full; speech alert was not sent.",
+                flush=True,
+            )
+
+    def send_notifications() -> None:
+        while not notification_stop.is_set() or not notification_queue.empty():
+            try:
+                notification_queue.get(timeout=0.1)
+            except queue.Empty:
+                continue
+            try:
+                notifier.send_speech_detected()
+                print("[SENTINEL] Phone notification sent.", flush=True)
+            except Exception as exc:
+                print(f"[SENTINEL] Phone notification failed: {exc}", flush=True)
+            finally:
+                notification_queue.task_done()
+
     def process_audio() -> None:
         try:
             def consume(converted_audio: np.ndarray) -> None:
@@ -169,6 +198,7 @@ def run() -> None:
                     event = tracker.update(frame)
                     if event is not None:
                         _print_event(event)
+                        enqueue_notification(event)
 
             while not stop_event.is_set() or not audio_queue.empty():
                 try:
@@ -186,6 +216,7 @@ def run() -> None:
                 event = tracker.update(frame)
                 if event is not None:
                     _print_event(event)
+                    enqueue_notification(event)
             event = tracker.finish()
             if event is not None:
                 _print_event(event)
@@ -199,6 +230,20 @@ def run() -> None:
         daemon=True,
     )
     worker.start()
+    notification_worker: threading.Thread | None = None
+    if notifier.enabled:
+        notification_worker = threading.Thread(
+            target=send_notifications,
+            name="sentinel-ntfy-publisher",
+            daemon=True,
+        )
+        notification_worker.start()
+        print("[SENTINEL] Phone notifications enabled.", flush=True)
+    else:
+        print(
+            "[SENTINEL] Phone notifications disabled; set SENTINEL_NTFY_TOPIC to enable.",
+            flush=True,
+        )
     print(f"[SENTINEL] Audio stream starting: {device_name} at {input_rate} Hz.", flush=True)
 
     try:
@@ -219,9 +264,14 @@ def run() -> None:
     finally:
         stop_event.set()
         worker.join(timeout=10)
+        notification_stop.set()
+        if notification_worker is not None:
+            notification_worker.join(timeout=10)
 
     if worker.is_alive():
         raise RuntimeError("Audio processing worker did not stop cleanly.")
+    if notification_worker is not None and notification_worker.is_alive():
+        raise RuntimeError("Notification worker did not stop cleanly.")
     if worker_error:
         raise RuntimeError("Audio processing failed.") from worker_error[0]
     if callback_error:

@@ -62,6 +62,33 @@ SENTINEL_DEVICE=1 ./run_sentinel.sh
 Speak near the microphone. The terminal should print `Speech detected`, then
 `Speech ended` after a short quiet pause. Press `Ctrl+C` to stop listening.
 
+### Send speech alerts to ntfy
+
+ntfy works by having the phone subscribe to a topic while Sentinel posts a
+message to that same topic. Install the ntfy app on the phone, add a topic, and
+use the exact same topic on the Pi. On the Pi:
+
+```bash
+export SENTINEL_NTFY_TOPIC="sentinel-$(python3 -c 'import secrets; print(secrets.token_hex(16))')"
+echo "$SENTINEL_NTFY_TOPIC"
+```
+
+Subscribe to the printed topic in the phone app, then start Sentinel in that
+same Pi terminal:
+
+```bash
+./run_sentinel.sh
+```
+
+The default server is `https://ntfy.sh`. You can set `SENTINEL_NTFY_SERVER` to
+use a different ntfy server, or `SENTINEL_NTFY_TOKEN` if that server requires
+an access token. A speech-start event sends one `Speech detected` notification;
+speech-end events stay in the terminal. The notification contains no audio.
+
+Topics on the public ntfy.sh service are public to anyone who knows the topic,
+so choose a long, hard-to-guess name and keep it private. If you need access
+controls, use an authenticated ntfy server and set its token on the Pi.
+
 ## Project Status
 
 Early development. The live speech check continuously captures audio and

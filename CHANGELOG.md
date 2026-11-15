@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-11-14 — ntfy Speech Alerts
+
+### Added
+- Added an ntfy publisher that sends a notification when speech starts.
+- Added a separate notification worker so network requests do not block audio
+  capture or VAD processing.
+- Added configuration for ntfy topic, server, and optional bearer token through
+  environment variables.
+- Documented phone subscription and Pi configuration steps.
+
+### Tested
+- ntfy publishing request construction and disabled-without-topic behavior are
+  covered with mocked HTTP responses; no message is sent to an external topic.
+
 ## 2026-11-14 — Live Speech/Silence Prototype
 
 ### Added
