@@ -4,7 +4,6 @@ import numpy as np
 
 from sentinel.detection.webrtc_vad import WebRTCVAD
 
-
 SAMPLE_RATE = 16000
 AUDIO_DURATION = 9
 ITERATIONS = 100

@@ -5,7 +5,6 @@ import numpy as np
 
 from sentinel.detection.webrtc_vad import WebRTCVAD
 
-
 SAMPLE_RATE = 16000
 FRAME_DURATION = 20
 
