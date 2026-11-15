@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-11-14 — Microphone Default Fallback
+
+### Fixed
+- Fall back to an available input device when PortAudio has no default input
+  selected, preferring a USB microphone when present.
+- Report a clear error when no microphone input is available or an explicitly
+  configured device cannot be queried.
+
+### Tested
+- Live device selection and Discord notifier tests: 9 passed.
+- Ruff and whitespace checks passed.
+
 ## 2026-11-14 — Discord Webhook Error Details
 
 ### Changed

@@ -87,13 +87,54 @@ class SpeechStateTracker:
 
 def _select_input_device() -> tuple[int | str | None, int]:
     configured_device = os.environ.get("SENTINEL_DEVICE")
-    device: int | str | None
     if configured_device:
-        device = int(configured_device) if configured_device.isdecimal() else configured_device
+        try:
+            device: int | str | None = int(configured_device)
+        except ValueError:
+            device = configured_device
+        try:
+            info = sd.query_devices(device, "input")
+        except sd.PortAudioError as exc:
+            raise RuntimeError(
+                f"Configured microphone {configured_device!r} is unavailable. "
+                "List devices with: .venv/bin/python -c "
+                "'import sounddevice as sd; print(sd.query_devices())'"
+            ) from exc
     else:
-        device = sd.default.device[0]
+        default_device = sd.default.device[0]
+        device = None
+        info = None
+        if default_device is not None and default_device >= 0:
+            try:
+                default_info = sd.query_devices(default_device, "input")
+            except sd.PortAudioError:
+                pass
+            else:
+                if default_info["max_input_channels"] > 0:
+                    device = default_device
+                    info = default_info
 
-    info = sd.query_devices(device, "input")
+        if device is None:
+            input_devices = [
+                (index, candidate)
+                for index, candidate in enumerate(sd.query_devices())
+                if candidate["max_input_channels"] > 0
+            ]
+            if not input_devices:
+                raise RuntimeError(
+                    "No microphone input devices were found. Check that the "
+                    "microphone is connected and visible to PortAudio."
+                )
+
+            device, info = next(
+                (
+                    entry
+                    for entry in input_devices
+                    if "usb" in entry[1]["name"].casefold()
+                ),
+                input_devices[0],
+            )
+
     configured_rate = os.environ.get("SENTINEL_INPUT_RATE")
     sample_rate = int(configured_rate) if configured_rate else int(
         info["default_samplerate"]

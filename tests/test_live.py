@@ -1,5 +1,10 @@
+from types import SimpleNamespace
+
+import pytest
+
+import sentinel.live as live
 from sentinel.detection.silero_vad import SileroVADFrame
-from sentinel.live import SpeechStateTracker
+from sentinel.live import SpeechStateTracker, _select_input_device
 
 
 def make_frame(timestamp, is_speech, probability=None):
@@ -45,3 +50,39 @@ def test_tracker_does_not_emit_start_for_single_positive_frame():
     assert tracker.update(make_frame(0.0, True)) is None
     assert tracker.update(make_frame(0.032, False)) is None
     assert not tracker.speaking
+
+
+def test_uses_available_usb_input_when_no_default_is_selected(monkeypatch):
+    devices = [
+        {"name": "HDMI Output", "max_input_channels": 0},
+        {
+            "name": "USB PnP Sound Device",
+            "max_input_channels": 1,
+            "default_samplerate": 44100,
+        },
+    ]
+    monkeypatch.delenv("SENTINEL_DEVICE", raising=False)
+    monkeypatch.delenv("SENTINEL_INPUT_RATE", raising=False)
+    monkeypatch.setattr(live.sd, "default", SimpleNamespace(device=(-1, -1)))
+
+    def fake_query_devices(*args):
+        if not args:
+            return devices
+        return devices[args[0]]
+
+    monkeypatch.setattr(live.sd, "query_devices", fake_query_devices)
+    monkeypatch.setattr(live.sd, "check_input_settings", lambda **kwargs: None)
+
+    device, sample_rate = _select_input_device()
+
+    assert device == 1
+    assert sample_rate == 44100
+
+
+def test_reports_when_no_microphone_inputs_are_found(monkeypatch):
+    monkeypatch.delenv("SENTINEL_DEVICE", raising=False)
+    monkeypatch.setattr(live.sd, "default", SimpleNamespace(device=(-1, -1)))
+    monkeypatch.setattr(live.sd, "query_devices", lambda: [])
+
+    with pytest.raises(RuntimeError, match="No microphone input devices"):
+        _select_input_device()
