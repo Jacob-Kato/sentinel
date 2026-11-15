@@ -38,6 +38,9 @@ def test_noise_alert_posts_json_to_configured_discord_webhook():
         "allowed_mentions": {"parse": []},
     }
     assert request.get_header("Content-type") == "application/json"
+    assert request.get_header("User-agent") == (
+        "DiscordBot (https://github.com/Jacob-Kato/sentinel, 0.1.0)"
+    )
     assert timeout == 5.0
 
 

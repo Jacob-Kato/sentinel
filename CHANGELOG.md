@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-11-14 — Discord HTTP Client Identification
+
+### Fixed
+- Add a project-specific Discord API User-Agent. Discord requires a valid
+  client User-Agent and may block HTTP requests that omit one.
+
+### Tested
+- Notification request tests check the User-Agent header.
+
 ## 2026-11-14 — Repeated Discord Notification Guidance
 
 ### Changed
