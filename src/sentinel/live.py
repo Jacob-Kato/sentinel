@@ -13,7 +13,7 @@ import sounddevice as sd
 import soxr
 
 from sentinel.detection.silero_vad import SileroVAD, SileroVADFrame
-from sentinel.notifications import NtfyNotifier
+from sentinel.notifications import DiscordWebhookNotifier
 
 
 @dataclass(frozen=True)
@@ -134,7 +134,7 @@ def run() -> None:
     callback_error: list[str] = []
     worker_error: list[BaseException] = []
     tracker = SpeechStateTracker()
-    notifier = NtfyNotifier.from_environment()
+    notifier = DiscordWebhookNotifier.from_environment()
     resampler = soxr.ResampleStream(input_rate, 16000, 1, dtype="float32")
     detector = SileroVAD()
     started_at = time.monotonic()
@@ -178,10 +178,10 @@ def run() -> None:
             except queue.Empty:
                 continue
             try:
-                notifier.send_speech_detected()
-                print("[SENTINEL] Phone notification sent.", flush=True)
+                notifier.send_noise_detected()
+                print("[SENTINEL] Discord notification sent.", flush=True)
             except Exception as exc:
-                print(f"[SENTINEL] Phone notification failed: {exc}", flush=True)
+                print(f"[SENTINEL] Discord notification failed: {exc}", flush=True)
             finally:
                 notification_queue.task_done()
 
@@ -234,14 +234,15 @@ def run() -> None:
     if notifier.enabled:
         notification_worker = threading.Thread(
             target=send_notifications,
-            name="sentinel-ntfy-publisher",
+            name="sentinel-discord-publisher",
             daemon=True,
         )
         notification_worker.start()
-        print("[SENTINEL] Phone notifications enabled.", flush=True)
+        print("[SENTINEL] Discord notifications enabled.", flush=True)
     else:
         print(
-            "[SENTINEL] Phone notifications disabled; set SENTINEL_NTFY_TOPIC to enable.",
+            "[SENTINEL] Discord notifications disabled; set "
+            "SENTINEL_DISCORD_WEBHOOK_URL to enable.",
             flush=True,
         )
     print(f"[SENTINEL] Audio stream starting: {device_name} at {input_rate} Hz.", flush=True)

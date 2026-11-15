@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-11-14 — Discord Speech Alerts
+
+### Changed
+- Replaced ntfy topic publishing with Discord incoming webhooks.
+- Speech-start events post `Noise detected.` to the configured Discord channel.
+- Added local `.env` loading for `SENTINEL_DISCORD_WEBHOOK_URL`; the webhook
+  secret is not stored in the repository.
+- Updated setup guidance for webhook creation and phone push notifications.
+
+### Tested
+- Discord webhook request construction and URL validation are covered with
+  mocked HTTP responses; no message is sent to a real Discord channel.
+
 ## 2026-11-14 — ntfy Speech Alerts
 
 ### Added

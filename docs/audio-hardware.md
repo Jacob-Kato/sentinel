@@ -35,9 +35,9 @@ streaming resampler → Silero VAD at 16,000 Hz
 
 The capture callback only copies microphone blocks into the queue. A separate
 worker performs resampling and VAD inference. Speech start/end transitions are
-printed to the terminal. If an ntfy topic is configured, a separate worker
-also sends a notification when speech starts. Raw audio is held in memory only
-and is not written to disk.
+printed to the terminal. If a Discord webhook URL is configured, a separate
+worker also sends a notification when speech starts. Raw audio is held in
+memory only and is not written to disk.
 
 No audio recordings are written to disk by the microphone module.
 
