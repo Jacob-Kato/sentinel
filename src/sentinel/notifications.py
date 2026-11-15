@@ -64,10 +64,14 @@ class DiscordWebhookNotifier:
         }
         request = Request(
             url,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "User-Agent": "DiscordBot (https://example.com, 1.0)"
+        },
+        method="POST",
+    )
+
 
         try:
             with self._opener(request, timeout=self.timeout_seconds) as response:
