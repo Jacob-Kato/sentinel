@@ -18,6 +18,14 @@ dev = [
     "ruff",
 ]
 
+vad-webrtc = [
+    "webrtcvad-wheels>=2.0.14",
+]
+
+vad-silero = [
+    "onnxruntime>=1.16.1",
+]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
